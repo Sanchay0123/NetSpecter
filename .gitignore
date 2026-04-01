@@ -1,0 +1,15 @@
+# IDEs
+.vscode/
+.idea/
+
+# Build Directory
+build/
+bin/
+
+# Compiled Binaries (if they end up in root)
+netspecter
+
+# Temporary files
+*.o
+*.a
+*.so
