@@ -9,6 +9,9 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <fstream>
+#include <iomanip>
+
 
 std::atomic<bool> keep_running(true);
 
@@ -33,40 +36,50 @@ std::string get_interface_ip(const std::string& iface) {
     return ip_addr;
 }
 
+std::string get_timestamp() {
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&now_c), "%Y-%m-%d %H:%M:%S");
+    return ss.str();
+}
+
 void nitro_watchdog(StatsTracker& tracker, GuardController& guard, std::string myIP) {
+    const std::string BLACKLIST_FILE = "blacklist.csv";
+
     while (keep_running) {
-        // 1. NITRO SAMPLING: Check every 800ms to catch Windows Nmap bursts
         std::this_thread::sleep_for(std::chrono::milliseconds(800));
-        
-        // 2. REFRESH METRICS: Calculate PPS based on recent packets
         tracker.calculate_metrics();
 
-        // 3. THREAT DETECTION: Get a current snapshot of the network state
         auto stats = tracker.get_snapshot();
-        uint32_t threshold = 50; // Tuned for your Windows Nmap PPS (~250-350)
+        uint32_t threshold = 300; 
 
         for (auto const& [ip, data] : stats) {
-            // WHITE-LIST: Skip the local machine and loopback
             if (ip == myIP || ip == "127.0.0.1") continue;
 
-            // ENFORCEMENT LOGIC: If PPS > 150 and not already blocked
             if (!data.is_blocked && data.last_pps > threshold) {
-                
-                // TRIGGER KERNEL BLOCK
+                // 1. Trigger Kernel Block
                 if (guard.blockIP(ip)) {
                     tracker.mark_as_blocked(ip);
                     
-                    // High-Visibility Alert (Prints even if Dashboard clears)
+                    // 2. PERSISTENT LOGGING (CSV Format: Timestamp, IP, PPS)
+                    std::ofstream csv_file(BLACKLIST_FILE, std::ios::app);
+                    if (csv_file.is_open()) {
+                        csv_file << get_timestamp() << "," << ip << "," << data.last_pps << "\n";
+                        csv_file.close();
+                    }
+
                     std::cout << "\n\033[1;31m[!] NITRO GUARD: XDP BLOCK TRIGGERED FOR " << ip 
-                              << " (" << data.last_pps << " PPS)\033[0m" << std::endl;
-                    std::this_thread::sleep_for(std::chrono::milliseconds(200)); // Brief pause for visual impact
+                              << " (" << data.last_pps << " PPS) -> Logged to CSV\033[0m" << std::endl;
+                    
+                    std::this_thread::sleep_for(std::chrono::milliseconds(200)); 
                 } else {
-                    std::cout << "\033[1;41m[ERROR] GuardController failed to update BPF Map for " << ip << "\033[0m" << std::endl;
+                    std::cout << "\033[1;41m[ERROR] GuardController failed for " << ip << "\033[0m" << std::endl;
                 }
             }
         }
 
-        // 4. DASHBOARD RENDERING: Refresh the UI
+        // --- Dashboard Rendering ---
         std::cout << "\033[2J\033[1;1H"; 
         std::cout << "=== NETSPECTER NITRO LIVE DASHBOARD ===" << std::endl;
         std::cout << "Local IP: " << myIP << " (Whitelisted) | Threshold: " << threshold << " PPS" << std::endl;
@@ -90,11 +103,34 @@ int main(int argc, char* argv[]) {
     }
 
     std::string interface = argv[1];
+    const std::string BLACKLIST_FILE = "blacklist.csv";
     
     try {
         GuardController guard("/sys/fs/bpf/netspecter/blacklist_map");
-        
-        // CLI Administrative Overrides
+        StatsTracker tracker;
+
+        // --- PHASE 1: BOOTSTRAP PERSISTENT BLACKLIST ---
+        std::ifstream infile(BLACKLIST_FILE);
+        if (infile.is_open()) {
+            std::cout << "[*] Bootstrapping Persistent Blacklist..." << std::endl;
+            std::string line;
+            int count = 0;
+            while (std::getline(infile, line)) {
+                std::stringstream ss(line);
+                std::string timestamp, ip_to_block;
+                // CSV Format: Timestamp, IP, PPS
+                if (std::getline(ss, timestamp, ',') && std::getline(ss, ip_to_block, ',')) {
+                    if (guard.blockIP(ip_to_block)) {
+                        tracker.mark_as_blocked(ip_to_block);
+                        count++;
+                    }
+                }
+            }
+            std::cout << "[+] Successfully restored " << count << " blocks from CSV." << std::endl;
+            infile.close();
+        }
+
+        // --- PHASE 2: CLI ADMINISTRATIVE OVERRIDES ---
         if (argc == 4) {
             std::string cmd = argv[2];
             if (cmd == "--block") {
@@ -106,14 +142,11 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Identify current IP for the whitelist
+        // --- PHASE 3: ENGINE STARTUP ---
         std::string myIP = get_interface_ip(interface);
-
-        StatsTracker tracker;
         CaptureEngine engine(interface, tracker);
         if (!engine.init()) return 1;
 
-        // Launch the Watchdog with the whitelist IP
         std::thread worker(nitro_watchdog, std::ref(tracker), std::ref(guard), myIP);
 
         engine.start();

@@ -51,3 +51,27 @@ bool GuardController::unblockIP(const std::string& ipStr) {
     std::cout << "[NITRO] Unblocked: " << ipStr << std::endl;
     return true;
 }
+
+void GuardController::load_from_csv(const std::string& filename) {
+    std::ifstream file(filename);
+    std::string ip;
+    if (!file.is_open()) return;
+
+    std::cout << "[*] Loading Persistent Blacklist from " << filename << "..." << std::endl;
+    while (std::getline(file, ip)) {
+        if (!ip.empty()) {
+            this->blockIP(ip); // Push to Kernel Map immediately
+        }
+    }
+}
+
+bool GuardController::blockIP_and_save(const std::string& ip, const std::string& filename) {
+    if (this->blockIP(ip)) {
+        std::ofstream file(filename, std::ios::app); // Append mode
+        if (file.is_open()) {
+            file << ip << "\n";
+            return true;
+        }
+    }
+    return false;
+}
