@@ -1,0 +1,62 @@
+#include <linux/bpf.h>
+#include <bpf/bpf_helpers.h>
+#include <linux/if_ether.h>
+#include <linux/ip.h>
+#include <linux/in.h>
+
+/* * Blacklist Map: 
+ * Key: IPv4 address (__u32)
+ * Value: Drop counter (__u64)
+ */
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1024);
+    __type(key, __u32);
+    __type(value, __u64);
+} blacklist_map SEC(".maps");
+
+SEC("xdp")
+int xdp_specter_handler(struct xdp_md *ctx) {
+    void *data_end = (void *)(long)ctx->data_end;
+    void *data = (void *)(long)ctx->data;
+
+    // 1. Parse Ethernet Header
+    struct ethhdr *eth = data;
+    if ((void *)(eth + 1) > data_end)
+        return XDP_PASS;
+
+    // 2. Filter for IPv4 (0x0800)
+    if (eth->h_proto != __constant_htons(ETH_P_IP)) 
+        return XDP_PASS;
+
+    // 3. Parse IP Header
+    struct iphdr *iph = (void *)eth + sizeof(struct ethhdr);
+    if ((void *)(iph + 1) > data_end)
+        return XDP_PASS;
+
+    // 4. Extract Source IP
+    __u32 src_ip = iph->saddr;
+    
+    // --- HARDCODED BLOCK TEST ---
+    // Google IP 142.251.221.238 (Hex from your log: 0xeeddfb8e)
+    if (src_ip == 0xeeddfb8e) {
+        bpf_printk("!!! NITRO DROP: GOOGLE BYPASS KILLED !!!");
+        return XDP_DROP;
+    }
+    
+    // DEBUG: Log the IP and its Hex value
+    bpf_printk("NetSpecter: Checking %pI4 (Hex: %x)", &src_ip, src_ip);
+
+    // 5. Check the Nitro Blacklist Map
+    __u64 *drop_count = bpf_map_lookup_elem(&blacklist_map, &src_ip);
+    
+    if (drop_count) {
+        __sync_fetch_and_add(drop_count, 1);
+        bpf_printk("!!! NITRO DROP !!! IP: %pI4", &src_ip);
+        return XDP_DROP;
+    }
+
+    return XDP_PASS;
+}
+
+char _license[] SEC("license") = "GPL";

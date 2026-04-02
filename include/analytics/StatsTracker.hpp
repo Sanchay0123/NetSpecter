@@ -8,28 +8,36 @@
 #include <cstdint>
 #include <vector>
 
+struct IPFlowStats {
+    uint64_t total_bytes;
+    uint32_t total_packets;
+    uint32_t last_packet_count;
+    uint32_t last_pps;
+    bool is_blocked;
+};
+
 class StatsTracker {
 public:
     StatsTracker() = default;
 
-    // Fast path: No mutex, uses Atomic operations
     void addPacket(const std::string& protocol, uint32_t size);
+    void update(const std::string& ip_key, uint32_t size);
     
-    // Slow path: Still uses mutex (called less frequently for specific flows)
-    void update(const std::string& flow_key, uint32_t size);
-    
-    void print_top_talkers(int limit = 10);
+    // Nitro Logic: Calculate PPS and find threats
+    void calculate_metrics();
+    std::map<std::string, IPFlowStats> get_snapshot();
+    std::vector<std::string> detect_threats(uint32_t threshold_pps);
+    void mark_as_blocked(const std::string& ip);
+
     void print_summary() const;
 
 private:
-    // Global counters using Lock-Free Atomics
     std::atomic<uint64_t> total_bytes_{0};
     std::atomic<uint64_t> tcp_count_{0};
     std::atomic<uint64_t> udp_count_{0};
     std::atomic<uint64_t> other_count_{0};
 
-    // Flow data still needs a mutex because maps aren't thread-safe
-    std::map<std::string, uint64_t> flow_data_;
+    std::map<std::string, IPFlowStats> flow_data_;
     mutable std::mutex flow_mutex_;
 };
 
