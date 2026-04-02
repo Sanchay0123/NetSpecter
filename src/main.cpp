@@ -63,10 +63,20 @@ void nitro_watchdog(StatsTracker& tracker, GuardController& guard, std::string m
                     tracker.mark_as_blocked(ip);
                     
                     // 2. PERSISTENT LOGGING (CSV Format: Timestamp, IP, PPS)
-                    std::ofstream csv_file(BLACKLIST_FILE, std::ios::app);
+                    std::ofstream csv_file;
+                    csv_file.open(BLACKLIST_FILE, std::ios::app); 
+
                     if (csv_file.is_open()) {
-                        csv_file << get_timestamp() << "," << ip << "," << data.last_pps << "\n";
+                        csv_file << get_timestamp() << "," << ip << "," << data.last_pps << std::endl;
+                        csv_file.flush(); // Force write to disk immediately
                         csv_file.close();
+                        // This will confirm in the console that the file was written
+                        std::cout << "[+] Blacklist updated: " << BLACKLIST_FILE << std::endl;
+                    } 
+                    else {
+                        // If this prints, we have a permission or path problem!
+                        std::cerr << "\033[1;33m[!] FILE ERROR: Could not write to " << BLACKLIST_FILE 
+                        << " (Check permissions/path)\033[0m" << std::endl;
                     }
 
                     std::cout << "\n\033[1;31m[!] NITRO GUARD: XDP BLOCK TRIGGERED FOR " << ip 
@@ -109,6 +119,10 @@ int main(int argc, char* argv[]) {
         GuardController guard("/sys/fs/bpf/netspecter/blacklist_map");
         StatsTracker tracker;
 
+        // Ensure the file exists right at startup
+        std::ofstream touch_file(BLACKLIST_FILE, std::ios::app);
+        touch_file.close();
+
         // --- PHASE 1: BOOTSTRAP PERSISTENT BLACKLIST ---
         std::ifstream infile(BLACKLIST_FILE);
         if (infile.is_open()) {
@@ -130,15 +144,56 @@ int main(int argc, char* argv[]) {
             infile.close();
         }
 
-        // --- PHASE 2: CLI ADMINISTRATIVE OVERRIDES ---
+        // CLI Administrative Overrides
         if (argc == 4) {
             std::string cmd = argv[2];
+            std::string target_ip = argv[3];
+
             if (cmd == "--block") {
-                guard.blockIP(argv[3]);
+                if (guard.blockIP(target_ip)) {
+                    // Log manual block to CSV
+                    std::ofstream csv_file(BLACKLIST_FILE, std::ios::app);
+                    if (csv_file.is_open()) {
+                        csv_file << get_timestamp() << "," << target_ip << ",MANUAL\n";
+                        csv_file.close();
+                    }
+                    std::cout << "[+] Manually blocked and logged: " << target_ip << std::endl;
+                }
                 return 0;
-            } else if (cmd == "--unblock") {
-                guard.unblockIP(argv[3]);
-                return 0;
+            } 
+            else if (cmd == "--unblock") {
+                std::string ip_to_remove = argv[3];
+                if (guard.unblockIP(ip_to_remove)) {
+                // --- PERSISTENT SYNC: Remove from CSV ---
+                std::ifstream infile(BLACKLIST_FILE);
+                std::vector<std::string> lines;
+                std::string line;
+                bool found = false;
+
+                while (std::getline(infile, line)) {
+                // If the line doesn't contain our IP, keep it
+                if (line.find(ip_to_remove) == std::string::npos) {
+                    lines.push_back(line);
+                } 
+                else {
+                    found = true;
+                }
+                }
+                infile.close();
+
+                if (found) {
+                    std::ofstream outfile(BLACKLIST_FILE, std::ios::trunc); // Overwrite mode
+                    for (const auto& l : lines) {
+                    outfile << l << "\n";
+                }
+                outfile.close();
+                std::cout << "[-] Manually unblocked and removed from CSV: " << ip_to_remove << std::endl;
+                }
+                else {
+                    std::cout << "[-] Manually unblocked " << ip_to_remove << " (not found in CSV)." << std::endl;
+                }
+            }
+            return 0;
             }
         }
 

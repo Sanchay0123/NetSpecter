@@ -4,6 +4,7 @@
 #include <arpa/inet.h>
 #include <iostream>
 #include <unistd.h>
+#include <fstream>
 
 GuardController::GuardController(const std::string& pinnedPath) {
     mapFd = bpf_obj_get(pinnedPath.c_str());
