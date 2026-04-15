@@ -22,8 +22,33 @@ void Dissector::parse(const struct pcap_pkthdr* h, const u_char* bytes, StatsTra
 
         // Identify Protocol
         std::string proto = "Other";
-        if (ip->protocol == IPPROTO_TCP) proto = "TCP";
-        else if (ip->protocol == IPPROTO_UDP) proto = "UDP";
+        uint16_t dst_port = 0;
+        const u_char* payload = nullptr;
+        uint32_t payload_len = 0;
+
+        if (ip->protocol == IPPROTO_TCP) {
+            proto = "TCP";
+            struct tcphdr* tcp = (struct tcphdr*)((u_char*)ip + (ip->ihl * 4));
+            dst_port = ntohs(tcp->dest);
+            uint32_t tcp_header_len = tcp->doff * 4;
+            payload = (const u_char*)tcp + tcp_header_len;
+        }
+        else if (ip->protocol == IPPROTO_UDP) {
+            proto = "UDP";
+            struct udphdr* udp = (struct udphdr*)((u_char*)ip + (ip->ihl * 4));
+            dst_port = ntohs(udp->dest);
+            payload = (const u_char*)udp + 8;
+        }
+
+        if (payload != nullptr) {
+            uint32_t offset = payload - bytes;
+            if (offset < h->caplen) {
+                payload_len = h->caplen - offset;
+            } else {
+                payload = nullptr;
+                payload_len = 0;
+            }
+        }
 
         // --- THE NITRO ENGINE UPDATE ---
         
@@ -31,7 +56,7 @@ void Dissector::parse(const struct pcap_pkthdr* h, const u_char* bytes, StatsTra
         tracker.addPacket(proto, h->len);
 
         // Update the per-IP Flow Map (This is what populates the Dashboard!)
-        tracker.update(src_ip, h->len);
+        tracker.update(src_ip, h->len, dst_port, payload, payload_len);
 
         // --- SILENCE THE NOISE ---
         // We do NOT print to stdout here anymore. 

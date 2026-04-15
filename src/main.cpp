@@ -57,10 +57,27 @@ void nitro_watchdog(StatsTracker& tracker, GuardController& guard, std::string m
         for (auto const& [ip, data] : stats) {
             if (ip == myIP || ip == "127.0.0.1") continue;
 
-            if (!data.is_blocked && data.last_pps > threshold) {
-                // 1. Trigger Kernel Block
-                if (guard.blockIP(ip)) {
-                    tracker.mark_as_blocked(ip);
+            if (!data.is_blocked) {
+                bool block = false;
+                std::string attack_type = "Unknown";
+
+                if (data.last_pps > threshold) {
+                    block = true;
+                    attack_type = "Targeted DoS";
+                }
+                if (data.dpi_hits > 0) {
+                    block = true;
+                    attack_type = "DPI Exploit";
+                }
+                if (!block && data.unique_dst_ports.size() >= 4 && data.entropy_score > 50.0f) {
+                    block = true;
+                    attack_type = "Port Scan";
+                }
+
+                if (block) {
+                    // 1. Trigger Kernel Block
+                    if (guard.blockIP(ip)) {
+                        tracker.mark_as_blocked(ip, attack_type);
                     
                     // 2. PERSISTENT LOGGING (CSV Format: Timestamp, IP, PPS)
                     std::ofstream csv_file;
@@ -80,11 +97,12 @@ void nitro_watchdog(StatsTracker& tracker, GuardController& guard, std::string m
                     }
 
                     std::cout << "\n\033[1;31m[!] NITRO GUARD: XDP BLOCK TRIGGERED FOR " << ip 
-                              << " (" << data.last_pps << " PPS) -> Logged to CSV\033[0m" << std::endl;
+                              << " (" << data.last_pps << " PPS) [" << attack_type << "] -> Logged to CSV\033[0m" << std::endl;
                     
                     std::this_thread::sleep_for(std::chrono::milliseconds(200)); 
                 } else {
                     std::cout << "\033[1;41m[ERROR] GuardController failed for " << ip << "\033[0m" << std::endl;
+                }
                 }
             }
         }
@@ -93,13 +111,13 @@ void nitro_watchdog(StatsTracker& tracker, GuardController& guard, std::string m
         std::cout << "\033[2J\033[1;1H"; 
         std::cout << "=== NETSPECTER NITRO LIVE DASHBOARD ===" << std::endl;
         std::cout << "Local IP: " << myIP << " (Whitelisted) | Threshold: " << threshold << " PPS" << std::endl;
-        std::cout << "------------------------------------------------------" << std::endl;
-        std::cout << "IP Address          | Pkts/Sec | Total Bytes | Status" << std::endl;
-        std::cout << "------------------------------------------------------" << std::endl;
+        std::cout << "--------------------------------------------------------------------------------------" << std::endl;
+        std::cout << "IP Address          | Pkts/Sec | Total Bytes | Ports | Entropy | DPI | Status" << std::endl;
+        std::cout << "--------------------------------------------------------------------------------------" << std::endl;
         
         for (auto const& [ip, data] : stats) {
-            std::string status = data.is_blocked ? "\033[1;31m[BLOCKED]\033[0m" : "\033[1;32mActive\033[0m";
-            printf("%-19s | %-8u | %-11lu | %s\n", ip.c_str(), data.last_pps, data.total_bytes, status.c_str());
+            std::string status = data.is_blocked ? "\033[1;31m[BLK:" + data.attack_type + "]\033[0m" : "\033[1;32mActive\033[0m";
+            printf("%-19s | %-8u | %-11lu | %-5zu | %-7.1f | %-3u | %s\n", ip.c_str(), data.last_pps, data.total_bytes, data.unique_dst_ports.size(), data.entropy_score, data.dpi_hits, status.c_str());
         }
         std::cout << "\n[Press Enter to Stop NetSpecter]" << std::endl;
     }
@@ -135,7 +153,7 @@ int main(int argc, char* argv[]) {
                 // CSV Format: Timestamp, IP, PPS
                 if (std::getline(ss, timestamp, ',') && std::getline(ss, ip_to_block, ',')) {
                     if (guard.blockIP(ip_to_block)) {
-                        tracker.mark_as_blocked(ip_to_block);
+                        tracker.mark_as_blocked(ip_to_block, "CSV Load");
                         count++;
                     }
                 }
