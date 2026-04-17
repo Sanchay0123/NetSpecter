@@ -15,6 +15,17 @@ struct {
     __type(value, __u64);
 } blacklist_map SEC(".maps");
 
+/* * Config Map: 
+ * Key: 0
+ * Value: Mode (0 = Ghost, 1 = Honey)
+ */
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u32);
+} config_map SEC(".maps");
+
 SEC("xdp")
 int xdp_specter_handler(struct xdp_md *ctx) {
     void *data_end = (void *)(long)ctx->data_end;
@@ -40,20 +51,26 @@ int xdp_specter_handler(struct xdp_md *ctx) {
     // --- HARDCODED BLOCK TEST ---
     // Google IP 142.251.221.238 (Hex from your log: 0xeeddfb8e)
     if (src_ip == 0xeeddfb8e) {
-        bpf_printk("!!! NITRO DROP: GOOGLE BYPASS KILLED !!!");
         return XDP_DROP;
     }
     
-    // DEBUG: Log the IP and its Hex value
-    bpf_printk("NetSpecter: Checking %pI4 (Hex: %x)", &src_ip, src_ip);
+    // Get mode from config map (Default to Ghost Mode = 0)
+    __u32 config_key = 0;
+    __u32 *mode = bpf_map_lookup_elem(&config_map, &config_key);
+    __u32 current_mode = mode ? *mode : 0;
 
     // 5. Check the Nitro Blacklist Map
     __u64 *drop_count = bpf_map_lookup_elem(&blacklist_map, &src_ip);
     
     if (drop_count) {
         __sync_fetch_and_add(drop_count, 1);
-        bpf_printk("!!! NITRO DROP !!! IP: %pI4", &src_ip);
-        return XDP_DROP;
+        if (current_mode == 0) {
+            // GHOST MODE: 0 response.
+            return XDP_DROP;
+        } else {
+            // HONEY MODE: Pass for analysis
+            return XDP_PASS;
+        }
     }
 
     return XDP_PASS;

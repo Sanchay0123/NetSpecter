@@ -30,10 +30,17 @@ fi
 if [ -f /sys/fs/bpf/netspecter/blacklist_map ]; then
     sudo rm /sys/fs/bpf/netspecter/blacklist_map
 fi
+if [ -f /sys/fs/bpf/netspecter/config_map ]; then
+    sudo rm /sys/fs/bpf/netspecter/config_map
+fi
 
-# 3. Force the pin (the -f flag handles the 'already exists' error internally)
 echo "[*] Syncing Portal: Pinning Map ID $MAP_ID..."
 sudo bpftool map pin id $MAP_ID /sys/fs/bpf/netspecter/blacklist_map -f
+
+CONFIG_MAP_ID=$(sudo bpftool map show | grep "config_map" | cut -d: -f1 | head -n 1)
+if [ ! -z "$CONFIG_MAP_ID" ]; then
+    sudo bpftool map pin id $CONFIG_MAP_ID /sys/fs/bpf/netspecter/config_map -f
+fi
 
 # 4. Execute the NetSpecter binary
 sudo ./build/netspecter "$@"

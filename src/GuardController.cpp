@@ -11,10 +11,13 @@ GuardController::GuardController(const std::string& pinnedPath) {
     if (mapFd < 0) {
         throw std::runtime_error("Guard Portal Offline: Check if map is pinned at " + pinnedPath);
     }
+    
+    configMapFd = bpf_obj_get("/sys/fs/bpf/netspecter/config_map");
 }
 
 GuardController::~GuardController() {
     if (mapFd >= 0) close(mapFd);
+    if (configMapFd >= 0) close(configMapFd);
 }
 
 bool GuardController::blockIP(const std::string& ipStr) {
@@ -75,4 +78,11 @@ bool GuardController::blockIP_and_save(const std::string& ip, const std::string&
         }
     }
     return false;
+}
+
+void GuardController::setConfigMode(int mode) {
+    if (configMapFd < 0) return;
+    uint32_t key = 0;
+    uint32_t val = mode;
+    bpf_map_update_elem(configMapFd, &key, &val, BPF_ANY);
 }

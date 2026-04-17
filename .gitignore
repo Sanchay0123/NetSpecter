@@ -1,15 +1,53 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+*.bpf.o
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+netspecter
+
+# CMake
+build/
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+
 # IDEs
 .vscode/
 .idea/
+*.swp
 
-# Build Directory
-build/
-bin/
-
-# Compiled Binaries (if they end up in root)
-netspecter
-
-# Temporary files
-*.o
-*.a
-*.so
+# NetSpecter Dynamic Data
+telemetry.json
+blacklist.csv

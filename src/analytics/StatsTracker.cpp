@@ -31,14 +31,24 @@ void StatsTracker::update(const std::string& ip_key, uint32_t size, uint16_t dst
             // NOP sled \x90\x90\x90\x90
             if (payload[i] == 0x90 && payload[i+1] == 0x90 && payload[i+2] == 0x90 && payload[i+3] == 0x90) {
                 stats.dpi_hits++;
+                if (exporter_ != nullptr) {
+                    exporter_->log_event(ip_key, "DPI Exploit (NOP sled)", stats.entropy_score, payload, payload_len);
+                }
                 i += 3; // basic skip
             }
             // Basic SQLi UNION
             else if (i + 5 <= payload_len && payload[i] == 'U' && payload[i+1] == 'N' && payload[i+2] == 'I' && payload[i+3] == 'O' && payload[i+4] == 'N') {
                 stats.dpi_hits++;
+                if (exporter_ != nullptr) {
+                    exporter_->log_event(ip_key, "DPI Exploit (UNION)", stats.entropy_score, payload, payload_len);
+                }
                 i += 4; // basic skip
             }
         }
+    }
+
+    if (stats.is_blocked && exporter_ != nullptr) {
+        exporter_->log_event(ip_key, stats.attack_type, stats.entropy_score, payload, payload_len);
     }
 }
 

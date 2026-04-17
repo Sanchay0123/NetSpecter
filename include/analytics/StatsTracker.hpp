@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstdint>
 #include <vector>
+#include "telemetry/TelemetryExporter.hpp"
 
 struct IPFlowStats {
     uint64_t total_bytes;
@@ -30,6 +31,8 @@ public:
     void addPacket(const std::string& protocol, uint32_t size);
     void update(const std::string& ip_key, uint32_t size, uint16_t dst_port = 0, const unsigned char* payload = nullptr, uint32_t payload_len = 0);
     
+    void set_exporter(TelemetryExporter* exporter) { exporter_ = exporter; }
+
     // Nitro Logic: Calculate PPS and find threats
     void calculate_metrics();
     std::map<std::string, IPFlowStats> get_snapshot();
@@ -46,6 +49,8 @@ private:
 
     std::map<std::string, IPFlowStats> flow_data_;
     mutable std::mutex flow_mutex_;
+    
+    TelemetryExporter* exporter_ = nullptr;
 };
 
 #endif
